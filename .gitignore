@@ -1,0 +1,12 @@
+/bin/
+/dist/
+/local/
+.env
+.env.*
+!.env.example
+*.log
+coverage.out
+*.db
+*.db-journal
+*.db-wal
+*.db-shm

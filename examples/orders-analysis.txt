@@ -1,0 +1,64 @@
+{
+  "status": "success",
+  "data": {
+    "resultType": "streams",
+    "result": [
+      {
+        "stream": {
+          "app": "sds-orders",
+          "dataset": "synthetic-example"
+        },
+        "values": [
+          [
+            "1791540000000000000",
+            "{\"context\":\"orders\",\"id\":\"demo-order-001\",\"resellerId\":\"demo-reseller-a\",\"status\":\"provision\",\"msg\":\"creating order\"}"
+          ],
+          [
+            "1791540001000000000",
+            "{\"context\":\"orders\",\"id\":\"demo-item-001\",\"orderId\":\"demo-order-001\",\"msg\":\"create order item\"}"
+          ],
+          [
+            "1791540002000000000",
+            "{\"context\":\"orders\",\"id\":\"demo-order-001\",\"msg\":\"sending order to provision\"}"
+          ],
+          [
+            "1791540003000000000",
+            "{\"context\":\"orders\",\"id\":\"demo-order-001\",\"status\":\"provision\",\"msg\":\"order created\"}"
+          ],
+          [
+            "1791540004000000000",
+            "{\"context\":\"orders\",\"orderId\":\"demo-order-001\",\"msg\":\"order create error order still being provision\"}"
+          ],
+          [
+            "1791540005000000000",
+            "{\"context\":\"orders\",\"orderId\":\"demo-order-001\",\"msg\":\"order items provisioned\"}"
+          ],
+          [
+            "1791540006000000000",
+            "{\"context\":\"orders\",\"orderId\":\"demo-order-001\",\"msg\":\"order provisioned\"}"
+          ],
+          [
+            "1791540007000000000",
+            "{\"context\":\"orders\",\"id\":\"demo-order-001\",\"msg\":\"getting order\"}"
+          ],
+          [
+            "1791540008000000000",
+            "{\"context\":\"orders\",\"id\":\"demo-order-001\",\"msg\":\"order received successfully\"}"
+          ],
+          [
+            "1791540009000000000",
+            "{\"context\":\"orders\",\"id\":\"demo-order-002\",\"resellerId\":\"demo-reseller-b\",\"msg\":\"getting order\"}"
+          ],
+          [
+            "1791540010000000000",
+            "{\"context\":\"orders\",\"id\":\"demo-order-002\",\"msg\":\"order received successfully\"}"
+          ],
+          [
+            "1791540011000000000",
+            "{\"context\":\"orders\",\"orderId\":\"demo-order-002\",\"msg\":\"synthetic unknown event\"}"
+          ]
+        ]
+      }
+    ]
+  }
+}

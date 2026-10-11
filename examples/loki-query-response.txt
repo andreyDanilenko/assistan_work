@@ -1,0 +1,248 @@
+{
+  "status": "success",
+  "data": {
+    "resultType": "streams",
+    "result": [
+      {
+        "stream": {
+          "app": "sds-orders",
+          "container": "sds-orders",
+          "detected_level": "30",
+          "env": "prod",
+          "filename": "/var/log/pods/sds_sds-orders-7cb6559ccf-4c2dl_e5321fa1-5b8b-486b-978e-173151d1d6d4/sds-orders/0.log",
+          "job": "sds/sds-orders",
+          "level": "30",
+          "namespace": "sds",
+          "node_name": "cl1963bicotn9j4grtjq-ywuv",
+          "pod": "sds-orders-7cb6559ccf-4c2dl",
+          "service_name": "sds-orders",
+          "stream": "stdout"
+        },
+        "values": [
+          [
+            "1791570347171964777",
+            "{\"level\":30,\"time\":1791570347171,\"context\":\"orders\",\"id\":\"71640535-1dd6-42b4-ae11-0137503455c0\",\"type\":\"new\",\"items\":[{\"tariffId\":\"8ed2ad1b-478b-483e-9a0b-6abe9db922b5\"}],\"ownerId\":\"5b1f50aa-682b-42f4-920b-16076672422f\",\"resellerId\":\"490a7b2f-2797-47be-ab24-b63dbc03edf8\",\"endTime\":null,\"msg\":\"creating order\"}"
+          ],
+          [
+            "1791570347269934138",
+            "{\"level\":30,\"time\":1791570347269,\"context\":\"orders\",\"id\":\"386b2849-a8f3-476f-af99-f30370e25953\",\"orderId\":\"71640535-1dd6-42b4-ae11-0137503455c0\",\"ownerId\":\"5b1f50aa-682b-42f4-920b-16076672422f\",\"msg\":\"create order item\"}"
+          ],
+          [
+            "1791570347270982134",
+            "{\"level\":30,\"time\":1791570347269,\"context\":\"orders\",\"id\":\"71640535-1dd6-42b4-ae11-0137503455c0\",\"type\":\"new\",\"items\":[{\"tariffId\":\"8ed2ad1b-478b-483e-9a0b-6abe9db922b5\"}],\"ownerId\":\"5b1f50aa-682b-42f4-920b-16076672422f\",\"resellerId\":\"490a7b2f-2797-47be-ab24-b63dbc03edf8\",\"endTime\":null,\"status\":\"provision\",\"msg\":\"sending order to provision\"}"
+          ],
+          [
+            "1791570347270999679",
+            "{\"level\":30,\"time\":1791570347269,\"context\":\"orders\",\"id\":\"71640535-1dd6-42b4-ae11-0137503455c0\",\"type\":\"new\",\"items\":[{\"tariffId\":\"8ed2ad1b-478b-483e-9a0b-6abe9db922b5\"}],\"ownerId\":\"5b1f50aa-682b-42f4-920b-16076672422f\",\"resellerId\":\"490a7b2f-2797-47be-ab24-b63dbc03edf8\",\"endTime\":null,\"status\":\"provision\",\"msg\":\"order created\"}"
+          ]
+        ]
+      },
+      {
+        "stream": {
+          "app": "sds-orders",
+          "container": "sds-orders",
+          "detected_level": "30",
+          "env": "prod",
+          "filename": "/var/log/pods/sds_sds-orders-7cb6559ccf-cxf79_a5f7d36c-f6a0-437e-aa52-a7876b2fda25/sds-orders/0.log",
+          "job": "sds/sds-orders",
+          "level": "30",
+          "namespace": "sds",
+          "node_name": "cl1963bicotn9j4grtjq-ybun",
+          "pod": "sds-orders-7cb6559ccf-cxf79",
+          "service_name": "sds-orders",
+          "stream": "stdout"
+        },
+        "values": [
+          [
+            "1791570348650020209",
+            "{\"level\":30,\"time\":1791570348649,\"context\":\"orders\",\"id\":\"71640535-1dd6-42b4-ae11-0137503455c0\",\"ownerId\":\"5b1f50aa-682b-42f4-920b-16076672422f\",\"msg\":\"getting order\"}"
+          ]
+        ]
+      }
+    ],
+    "stats": {
+      "summary": {
+        "bytesProcessedPerSecond": 55671038,
+        "linesProcessedPerSecond": 224160,
+        "totalBytesProcessed": 432632,
+        "totalLinesProcessed": 1742,
+        "execTime": 0.007771,
+        "queueTime": 0.000162,
+        "subqueries": 0,
+        "totalEntriesReturned": 5,
+        "splits": 0,
+        "shards": 0,
+        "totalPostFilterLines": 1742,
+        "totalStructuredMetadataBytesProcessed": 39918
+      },
+      "querier": {
+        "store": {
+          "totalChunksRef": 0,
+          "totalChunksDownloaded": 0,
+          "chunksDownloadTime": 0,
+          "queryReferencedStructuredMetadata": false,
+          "queryUsedV2Engine": false,
+          "chunk": {
+            "headChunkBytes": 0,
+            "headChunkLines": 0,
+            "decompressedBytes": 0,
+            "decompressedLines": 0,
+            "compressedBytes": 0,
+            "totalDuplicates": 0,
+            "postFilterLines": 0,
+            "headChunkStructuredMetadataBytes": 0,
+            "decompressedStructuredMetadataBytes": 0
+          },
+          "chunkRefsFetchTime": 0,
+          "congestionControlLatency": 0,
+          "pipelineWrapperFilteredLines": 0,
+          "dataobj": {
+            "prePredicateDecompressedRows": 0,
+            "prePredicateDecompressedBytes": 0,
+            "prePredicateDecompressedStructuredMetadataBytes": 0,
+            "postPredicateRows": 0,
+            "postPredicateDecompressedBytes": 0,
+            "postPredicateStructuredMetadataBytes": 0,
+            "postFilterRows": 0,
+            "pagesScanned": 0,
+            "pagesDownloaded": 0,
+            "pagesDownloadedBytes": 0,
+            "pageBatches": 0,
+            "totalRowsAvailable": 0,
+            "totalPageDownloadTime": 0
+          }
+        }
+      },
+      "ingester": {
+        "totalReached": 1,
+        "totalChunksMatched": 21,
+        "totalBatches": 1,
+        "totalLinesSent": 5,
+        "store": {
+          "totalChunksRef": 0,
+          "totalChunksDownloaded": 0,
+          "chunksDownloadTime": 0,
+          "queryReferencedStructuredMetadata": false,
+          "queryUsedV2Engine": false,
+          "chunk": {
+            "headChunkBytes": 125391,
+            "headChunkLines": 561,
+            "decompressedBytes": 307241,
+            "decompressedLines": 1181,
+            "compressedBytes": 36452,
+            "totalDuplicates": 0,
+            "postFilterLines": 1742,
+            "headChunkStructuredMetadataBytes": 4488,
+            "decompressedStructuredMetadataBytes": 35430
+          },
+          "chunkRefsFetchTime": 202728,
+          "congestionControlLatency": 0,
+          "pipelineWrapperFilteredLines": 0,
+          "dataobj": {
+            "prePredicateDecompressedRows": 0,
+            "prePredicateDecompressedBytes": 0,
+            "prePredicateDecompressedStructuredMetadataBytes": 0,
+            "postPredicateRows": 0,
+            "postPredicateDecompressedBytes": 0,
+            "postPredicateStructuredMetadataBytes": 0,
+            "postFilterRows": 0,
+            "pagesScanned": 0,
+            "pagesDownloaded": 0,
+            "pagesDownloadedBytes": 0,
+            "pageBatches": 0,
+            "totalRowsAvailable": 0,
+            "totalPageDownloadTime": 0
+          }
+        }
+      },
+      "cache": {
+        "chunk": {
+          "entriesFound": 0,
+          "entriesRequested": 0,
+          "entriesStored": 0,
+          "bytesReceived": 0,
+          "bytesSent": 0,
+          "requests": 0,
+          "downloadTime": 0,
+          "queryLengthServed": 0
+        },
+        "index": {
+          "entriesFound": 0,
+          "entriesRequested": 0,
+          "entriesStored": 0,
+          "bytesReceived": 0,
+          "bytesSent": 0,
+          "requests": 0,
+          "downloadTime": 0,
+          "queryLengthServed": 0
+        },
+        "result": {
+          "entriesFound": 0,
+          "entriesRequested": 0,
+          "entriesStored": 0,
+          "bytesReceived": 0,
+          "bytesSent": 0,
+          "requests": 0,
+          "downloadTime": 0,
+          "queryLengthServed": 0
+        },
+        "statsResult": {
+          "entriesFound": 0,
+          "entriesRequested": 0,
+          "entriesStored": 0,
+          "bytesReceived": 0,
+          "bytesSent": 0,
+          "requests": 0,
+          "downloadTime": 0,
+          "queryLengthServed": 0
+        },
+        "volumeResult": {
+          "entriesFound": 0,
+          "entriesRequested": 0,
+          "entriesStored": 0,
+          "bytesReceived": 0,
+          "bytesSent": 0,
+          "requests": 0,
+          "downloadTime": 0,
+          "queryLengthServed": 0
+        },
+        "seriesResult": {
+          "entriesFound": 0,
+          "entriesRequested": 0,
+          "entriesStored": 0,
+          "bytesReceived": 0,
+          "bytesSent": 0,
+          "requests": 0,
+          "downloadTime": 0,
+          "queryLengthServed": 0
+        },
+        "labelResult": {
+          "entriesFound": 0,
+          "entriesRequested": 0,
+          "entriesStored": 0,
+          "bytesReceived": 0,
+          "bytesSent": 0,
+          "requests": 0,
+          "downloadTime": 0,
+          "queryLengthServed": 0
+        },
+        "instantMetricResult": {
+          "entriesFound": 0,
+          "entriesRequested": 0,
+          "entriesStored": 0,
+          "bytesReceived": 0,
+          "bytesSent": 0,
+          "requests": 0,
+          "downloadTime": 0,
+          "queryLengthServed": 0
+        }
+      },
+      "index": {
+        "totalChunks": 0,
+        "postFilterChunks": 0,
+        "shardsDuration": 0,
+        "usedBloomFilters": false
+      }
+    }
+  }
+}

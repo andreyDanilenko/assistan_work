@@ -33,8 +33,9 @@ func incrementalConfig(t *testing.T) (monitor.Config, string, *storage.Store) {
 	return cfg, path, store
 }
 
-func TestIncrementalCommitsEveryPortionAndResumesAfterOutageAndReopen(t *testing.T) {
+func TestIncrementalCommitsEveryPortionAndNewSessionSkipsOutageAfterReopen(t *testing.T) {
 	cfg, path, store := incrementalConfig(t)
+	cfg.Interval = 3 * time.Minute
 	var initialStart, durableEnd time.Time
 	calls := 0
 	source := monitorSourceFunc(func(ctx context.Context, q loki.Query) (model.FetchResult, error) {
@@ -51,7 +52,7 @@ func TestIncrementalCommitsEveryPortionAndResumesAfterOutageAndReopen(t *testing
 				t.Fatalf("previous portion was not durably committed: %v %+v", err, coverage)
 			}
 		}
-		if calls == 3 {
+		if calls >= 2 {
 			durableEnd = q.Start
 			return model.FetchResult{}, errors.New("offline")
 		}
@@ -61,8 +62,8 @@ func TestIncrementalCommitsEveryPortionAndResumesAfterOutageAndReopen(t *testing
 	if _, _, err := archiveCycle(t, context.Background(), cfg, source, sender, store); err == nil {
 		t.Fatal("outage must fail the one-shot command")
 	}
-	if calls != 3 || readMonitorState(t, cfg).NoLogs {
-		t.Fatal("outage retried within cycle or claimed absent logs")
+	if calls != 2 || readMonitorState(t, cfg).NoLogs {
+		t.Fatal("failed request was retried or claimed absent logs")
 	}
 	_, coverage, err := storage.ReadRange(context.Background(), path, storage.Query{SourceID: cfg.SourceID, Project: cfg.Project, Start: initialStart, End: durableEnd.Add(time.Minute)})
 	if err != nil || len(coverage.Gaps) != 1 || !coverage.Gaps[0].Start.Equal(durableEnd) {
@@ -76,11 +77,14 @@ func TestIncrementalCommitsEveryPortionAndResumesAfterOutageAndReopen(t *testing
 		t.Fatal(err)
 	}
 	defer store.Close()
+	// Перезапуск открывает новую сессию: старый неподтверждённый хвост
+	// остаётся пробелом, но не становится обязанностью нового процесса.
+	cfg.SessionStart = time.Now().UTC().Add(-30 * time.Second)
 	calls = 0
 	source = monitorSourceFunc(func(_ context.Context, q loki.Query) (model.FetchResult, error) {
 		calls++
-		if calls == 2 && !q.Start.Equal(durableEnd) {
-			t.Fatalf("restart skipped unconfirmed range: %s want %s", q.Start, durableEnd)
+		if q.Start.Before(cfg.SessionStart) || (calls == 1 && !q.Start.Equal(cfg.SessionStart)) {
+			t.Fatalf("new session backfilled the outage: %s want %s", q.Start, cfg.SessionStart)
 		}
 		return model.FetchResult{Complete: true}, nil
 	})
@@ -89,7 +93,11 @@ func TestIncrementalCommitsEveryPortionAndResumesAfterOutageAndReopen(t *testing
 		t.Fatal(err)
 	}
 	if readMonitorState(t, cfg).SourceFailed {
-		t.Fatal("successful retry retained source failure")
+		t.Fatal("successful fresh cycle retained source failure")
+	}
+	_, coverage, err = storage.ReadRange(context.Background(), path, storage.Query{SourceID: cfg.SourceID, Project: cfg.Project, Start: durableEnd, End: cfg.SessionStart})
+	if err != nil || len(coverage.Gaps) != 1 || !coverage.Gaps[0].Start.Equal(durableEnd) || !coverage.Gaps[0].End.Equal(cfg.SessionStart) {
+		t.Fatalf("new session claimed the skipped outage: %v %+v", err, coverage)
 	}
 }
 
@@ -124,46 +132,45 @@ func TestIncrementalSplitsPartialResponseAndCommitsChildBeforeSiblingFailure(t *
 	if _, _, err := archiveCycle(t, context.Background(), cfg, source, &monitorSender{}, store); err == nil {
 		t.Fatal("partial sibling failure should fail once")
 	}
-	cursor, err := store.Resume(context.Background(), model.LogRange{SourceID: cfg.SourceID, Project: cfg.Project, Start: firstStart, End: splitEnd.Add(time.Minute)}, time.Now())
-	if err != nil || !cursor.Equal(splitEnd) || calls != 3 {
-		t.Fatalf("partial prefix was lost or sibling skipped: %v %s calls=%d", err, cursor, calls)
+	coverage, err := store.Coverage(context.Background(), model.LogRange{SourceID: cfg.SourceID, Project: cfg.Project, Start: firstStart, End: splitEnd.Add(time.Minute)})
+	if err != nil || len(coverage.Gaps) != 1 || !coverage.Gaps[0].Start.Equal(splitEnd) || calls != 3 {
+		t.Fatalf("partial prefix was lost or failed sibling confirmed: %v %+v calls=%d", err, coverage, calls)
 	}
 }
 
-func TestIncrementalEmptyCatchupIsBoundedAndDoesNotClaimNoRecentLogs(t *testing.T) {
+func TestLiveEmptyWindowLeavesOlderDowntimeUnconfirmed(t *testing.T) {
 	cfg, _, store := incrementalConfig(t)
 	defer store.Close()
-	now := time.Now()
-	start := now.Add(-6 * time.Hour)
-	query := model.LogRange{SourceID: cfg.SourceID, Project: cfg.Project, Start: start, End: now.Add(-time.Minute)}
-	if _, err := store.Resume(context.Background(), query, now); err != nil {
+	now := time.Now().UTC()
+	cfg.SessionStart = now.Add(-6 * time.Hour)
+	old := model.LogRange{SourceID: cfg.SourceID, Project: cfg.Project, Start: cfg.SessionStart, End: cfg.SessionStart.Add(time.Minute)}
+	if err := store.SaveRange(context.Background(), old, nil, now); err != nil {
 		t.Fatal(err)
 	}
-	calls := 0
+	var queries []loki.Query
 	source := monitorSourceFunc(func(_ context.Context, q loki.Query) (model.FetchResult, error) {
-		calls++
+		queries = append(queries, q)
 		return model.FetchResult{Complete: true}, nil
 	})
 	sender := &monitorSender{}
 	output, _, err := archiveCycle(t, context.Background(), cfg, source, sender, store)
-	if err != nil || calls != 64 || !strings.Contains(output, "Догрузка: true") {
-		t.Fatalf("backlog was unbounded or treated as source failure: %v calls=%d %s", err, calls, output)
+	if err != nil || len(queries) != 1 || !strings.Contains(output, "Текущий сбор полный: true") {
+		t.Fatalf("live collection failed or fetched historical backlog: %v queries=%+v %s", err, queries, output)
+	}
+	if queries[0].Start.Before(now.Add(-10*time.Second-cfg.Interval)) || queries[0].End.Sub(queries[0].Start) != cfg.Interval {
+		t.Fatalf("live window grew with historical downtime: %+v", queries)
 	}
 	state := readMonitorState(t, cfg)
-	if state.SourceFailed || state.NoLogs || !state.LastComplete.IsZero() || len(sender.messages) != 1 || strings.Contains(sender.messages[0], "🟡 Логи не поступают") || !strings.Contains(sender.messages[0], "Не подтверждено") {
-		t.Fatalf("historical empty portions reported a healthy recent window: %+v %v", state, sender.messages)
+	if state.SourceFailed || state.NoLogs || state.LastComplete.IsZero() || len(sender.messages) != 1 || strings.Contains(sender.messages[0], "🟡 Логи не поступают") || !strings.Contains(sender.messages[0], "Не подтверждено") {
+		t.Fatalf("fresh empty window concealed older gaps: %+v %v", state, sender.messages)
 	}
-	cursor, err := store.Resume(context.Background(), query, time.Now())
-	if err != nil || !cursor.Equal(start.Add(128*time.Minute)) {
-		t.Fatalf("empty intervals did not advance durable cursor: %s %v", cursor, err)
-	}
-	coverage, err := store.Coverage(context.Background(), model.LogRange{SourceID: cfg.SourceID, Project: cfg.Project, Start: start, End: cursor})
-	if err != nil || !coverage.Known || len(coverage.Gaps) > 0 {
-		t.Fatalf("empty intervals lost confirmed coverage: %+v %v", coverage, err)
+	coverage, err := store.Coverage(context.Background(), model.LogRange{SourceID: cfg.SourceID, Project: cfg.Project, Start: old.End, End: queries[0].End})
+	if err != nil || len(coverage.Gaps) != 1 || !coverage.Gaps[0].Start.Equal(old.End) || !coverage.Gaps[0].End.Equal(queries[0].Start) {
+		t.Fatalf("live collection filled historical downtime: %v %+v", err, coverage)
 	}
 }
 
-func TestIncrementalOverlapFindsLateEventWithoutDuplicatingHistory(t *testing.T) {
+func TestFreshWindowDeduplicatesRepeatedRecords(t *testing.T) {
 	cfg, path, store := incrementalConfig(t)
 	defer store.Close()
 	stamp := time.Now().Add(-40 * time.Second)
@@ -188,12 +195,12 @@ func TestIncrementalOverlapFindsLateEventWithoutDuplicatingHistory(t *testing.T)
 	if _, _, err := archiveCycle(t, context.Background(), cfg, source, &monitorSender{}, store); err != nil {
 		t.Fatal(err)
 	}
-	if len(queries) != 2 || !queries[1].Start.Equal(firstEnd) || !queries[0].Start.Equal(firstEnd.Add(-time.Minute)) || !queries[0].End.Equal(firstEnd) {
-		t.Fatalf("restart fetched full window instead of tail and overlap: %+v", queries)
+	if len(queries) != 1 || queries[0].End.Sub(queries[0].Start) != cfg.Interval || !queries[0].End.After(firstEnd) {
+		t.Fatalf("next cycle did not fetch its fresh rolling window: %+v", queries)
 	}
 	archived, coverage, err := storage.ReadRange(context.Background(), path, storage.Query{SourceID: cfg.SourceID, Project: cfg.Project, Start: stamp.Add(-time.Minute), End: firstEnd})
 	if err != nil || len(archived) != 2 || len(coverage.Gaps) > 0 {
-		t.Fatalf("overlap lost late event or duplicated original: %v %+v %+v", err, archived, coverage)
+		t.Fatalf("fresh window lost a record or duplicated the original: %v %+v %+v", err, archived, coverage)
 	}
 }
 
@@ -217,108 +224,9 @@ func TestIncrementalSaturatedNanosecondStopsWithinBudgetAndKeepsGap(t *testing.T
 		t.Fatalf("adaptive subdivision did not terminate at minimum range: %d %s", calls, smallestEnd.Sub(start))
 	}
 	query := model.LogRange{SourceID: cfg.SourceID, Project: cfg.Project, Start: start, End: start.Add(time.Minute)}
-	cursor, err := store.Resume(context.Background(), query, time.Now())
-	if err != nil || !cursor.Equal(start) {
-		t.Fatalf("saturated interval was skipped: %s %v", cursor, err)
-	}
-}
-
-func TestIncrementalFailedOverlapIsRetriedAfterRestartBeforeAdvancing(t *testing.T) {
-	cfg, path, store := incrementalConfig(t)
-	original := time.Now().Add(-40 * time.Second)
-	record := model.LogRecord{Project: cfg.Project, Timestamp: original, Line: "original event"}
-	source := monitorSourceFunc(func(_ context.Context, q loki.Query) (model.FetchResult, error) {
-		result := model.FetchResult{Complete: true}
-		if !original.Before(q.Start) && original.Before(q.End) {
-			result.Records = []model.LogRecord{record}
-		}
-		return result, nil
-	})
-	if _, _, err := archiveCycle(t, context.Background(), cfg, source, &monitorSender{}, store); err != nil {
-		t.Fatal(err)
-	}
-	cursor := readMonitorState(t, cfg).LastComplete
-	var failedQuery loki.Query
-	source = monitorSourceFunc(func(_ context.Context, q loki.Query) (model.FetchResult, error) {
-		failedQuery = q
-		return model.FetchResult{}, errors.New("overlap unavailable")
-	})
-	if _, _, err := archiveCycle(t, context.Background(), cfg, source, &monitorSender{}, store); err == nil {
-		t.Fatal("failed overlap accepted")
-	}
-	if !failedQuery.Start.Equal(cursor.Add(-time.Minute)) || !failedQuery.End.Equal(cursor) {
-		t.Fatal("fresh range preceded overlap")
-	}
-	if err := store.Close(); err != nil {
-		t.Fatal(err)
-	}
-	var err error
-	store, err = storage.Open(context.Background(), path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	calls := 0
-	source = monitorSourceFunc(func(_ context.Context, q loki.Query) (model.FetchResult, error) {
-		calls++
-		if calls == 1 {
-			if !q.Start.Equal(failedQuery.Start) || !q.End.Equal(failedQuery.End) {
-				t.Fatalf("failed overlap skipped after restart: %+v", q)
-			}
-			late := record
-			late.Line = "late event"
-			return model.FetchResult{Complete: true, Records: []model.LogRecord{record, late}}, nil
-		}
-		return model.FetchResult{Complete: true}, nil
-	})
-	_, _, err = archiveCycle(t, context.Background(), cfg, source, &monitorSender{}, store)
-	if err != nil && !strings.Contains(err.Error(), "часть сообщений ожидает доставки") {
-		t.Fatal(err)
-	}
-	records, _, err := storage.ReadRange(context.Background(), path, storage.Query{SourceID: cfg.SourceID, Project: cfg.Project, Start: cursor.Add(-time.Minute), End: cursor})
-	if err != nil || len(records) != 2 {
-		t.Fatalf("retry missed delayed event: %v %+v", err, records)
-	}
-}
-
-func TestIncrementalOverlapStillRetriesWhenCursorOlderThanRollingWindow(t *testing.T) {
-	cfg, path, store := incrementalConfig(t)
-	defer store.Close()
-	cursor := time.Now().Add(-2 * time.Hour)
-	prior := model.LogRange{SourceID: cfg.SourceID, Project: cfg.Project, Start: cursor.Add(-cfg.Window), End: cursor}
-	if err := store.SaveRange(context.Background(), prior, nil, time.Now()); err != nil {
-		t.Fatal(err)
-	}
-	failed := monitorSourceFunc(func(_ context.Context, q loki.Query) (model.FetchResult, error) {
-		if !q.Start.Equal(cursor.Add(-time.Minute)) || !q.End.Equal(cursor) {
-			t.Fatalf("old overlap skipped before retry: %+v", q)
-		}
-		return model.FetchResult{}, errors.New("old overlap unavailable")
-	})
-	if _, _, err := archiveCycle(t, context.Background(), cfg, failed, &monitorSender{}, store); err == nil {
-		t.Fatal("failed overlap reported success")
-	}
-	// Новое окно короче предыдущего: сохранённая обязанность повтора не должна
-	// исчезать вслед за скользящей границей после паузы между запусками.
-	cfg.Window = time.Minute
-	calls := 0
-	retry := monitorSourceFunc(func(_ context.Context, q loki.Query) (model.FetchResult, error) {
-		calls++
-		if calls == 1 {
-			if !q.Start.Equal(cursor.Add(-time.Minute)) || !q.End.Equal(cursor) {
-				t.Fatalf("old overlap skipped on retry: %+v", q)
-			}
-			return model.FetchResult{Complete: true, Records: []model.LogRecord{{Project: cfg.Project, Timestamp: cursor.Add(-time.Second), Line: "late old event"}}}, nil
-		}
-		return model.FetchResult{Complete: true}, nil
-	})
-	_, _, err := archiveCycle(t, context.Background(), cfg, retry, &monitorSender{}, store)
-	if err != nil && !strings.Contains(err.Error(), "часть сообщений ожидает доставки") {
-		t.Fatal(err)
-	}
-	records, _, err := storage.ReadRange(context.Background(), path, storage.Query{SourceID: cfg.SourceID, Project: cfg.Project, Start: cursor.Add(-time.Minute), End: cursor})
-	if err != nil || len(records) != 1 {
-		t.Fatalf("long outage lost late event: %v %+v", err, records)
+	coverage, err := store.Coverage(context.Background(), query)
+	if err != nil || len(coverage.Gaps) != 1 || !coverage.Gaps[0].Start.Equal(query.Start) || !coverage.Gaps[0].End.Equal(query.End) {
+		t.Fatalf("saturated interval was confirmed: %+v %v", coverage, err)
 	}
 }
 

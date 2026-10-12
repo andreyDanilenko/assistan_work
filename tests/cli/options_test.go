@@ -82,7 +82,7 @@ func TestParseOptionsCommandArgumentsAndHelp(t *testing.T) {
 
 func TestParseTelegramCheck(t *testing.T) {
 	opts, err := cli.Parse([]string{"telegram-check", "--env-file", "bot.env", "--timeout", "5s"}, time.Now())
-	if err != nil || opts.Mode != cli.TelegramMode || opts.EnvFile != "bot.env" || !opts.ExplicitEnv || opts.Timeout != 5*time.Second {
+	if err != nil || opts.Mode != cli.TelegramCheckMode || opts.EnvFile != "bot.env" || !opts.ExplicitEnv || opts.Timeout != 5*time.Second {
 		t.Fatalf("Telegram arguments: %#v, %v", opts, err)
 	}
 	if opts.Request.Command != "" || !opts.Request.Start.IsZero() || !opts.Request.End.IsZero() {

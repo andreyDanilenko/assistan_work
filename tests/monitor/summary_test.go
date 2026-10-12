@@ -86,10 +86,11 @@ func TestCooldownSelectsWhenToSendButShowsAllOrdersInCurrentWindow(t *testing.T)
 func TestWindowUsesSameExclusiveEndAsDatabaseReport(t *testing.T) {
 	cfg := monitorConfig(t)
 	cfg.Window = 2 * time.Minute
+	cfg.SessionStart = time.Now().UTC().Add(-2 * time.Minute)
 	sender := &monitorSender{}
 	source := monitorSourceFunc(func(_ context.Context, q loki.Query) (model.FetchResult, error) {
 		return model.FetchResult{Complete: true, Records: []model.LogRecord{
-			{Project: q.Project, Timestamp: q.End.Add(-cfg.Window), Line: repeatedOrderError},
+			{Project: q.Project, Timestamp: q.Start, Line: repeatedOrderError},
 			{Project: q.Project, Timestamp: q.End, Line: `{"context":"orders","orderId":"boundary","msg":"order create error order not found"}`},
 		}}, nil
 	})

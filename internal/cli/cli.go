@@ -8,6 +8,7 @@ import (
 
 	"loki-analyzer/internal/app"
 	"loki-analyzer/internal/model"
+	"loki-analyzer/internal/report"
 )
 
 // Executor — нужная CLI операция сервиса. Реальный сервис или его замену передает main.
@@ -53,7 +54,7 @@ func RunAnalysis(ctx context.Context, service FileAnalyzer, options Options, out
 		WriteError(diagnostic, "Анализ не выполнен", err)
 		return 1
 	}
-	if err := printAnalysis(output, result, options.AllOrders); err != nil {
+	if err := report.WriteFile(output, result, options.AllOrders); err != nil {
 		fmt.Fprintln(diagnostic, "Не удалось вывести результат анализа.")
 		return 1
 	}

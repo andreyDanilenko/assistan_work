@@ -43,6 +43,8 @@ func monitorConfig(t *testing.T) monitor.Config {
 	return monitor.Config{
 		Project: "orders-test", SourceID: "https://test.invalid/loki", StateFile: filepath.Join(t.TempDir(), "watch.json"),
 		ChatID: -1005000000001, Interval: 2 * time.Minute, Window: 10 * time.Minute,
+		// Эти сценарии моделируют уже работающий процесс с полным окном.
+		SessionStart:   time.Now().UTC().Add(-10*time.Minute - 10*time.Second),
 		ReportInterval: time.Hour, Cooldown: 30 * time.Minute, NoLogsAfter: 10 * time.Minute,
 		ReadWindow: func(context.Context, time.Time, time.Time) ([]model.LogRecord, error) { return nil, nil },
 		Timeout:    time.Second, ErrorThreshold: 3, Critical: `(?i)\b(fatal|critical)\b`,
@@ -189,6 +191,7 @@ func TestMonitorAlertCountsOrderOnceAndListsEveryErrorCategory(t *testing.T) {
 
 func TestMonitorFullEmptyWindowWarnsOnceAndReports(t *testing.T) {
 	cfg := monitorConfig(t)
+	cfg.NoLogsAfter = 2 * time.Minute
 	sender := &monitorSender{}
 	for run := 0; run < 2; run++ {
 		if _, _, err := monitorCycle(t, context.Background(), cfg, recordsSource(t), sender); err != nil {

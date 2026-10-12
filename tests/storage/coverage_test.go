@@ -36,10 +36,31 @@ func assertCursor(t *testing.T, store *storage.Store, query model.LogRange, want
 	}
 }
 
-func TestResumePersistsBeforeFirstFetchAndNeverSkipsRollingGap(t *testing.T) {
+func TestResumeSameSessionFloorRetriesUnfinishedRange(t *testing.T) {
+	store, _ := openStore(t)
+	query := reportQuery()
+	assertCursor(t, store, query, query.Start)
+	// A failed first fetch saves nothing; the fixed session floor is retried.
+	later := query
+	later.End = later.End.Add(30 * time.Minute)
+	assertCursor(t, store, later, query.Start)
+	first := query
+	first.End = first.Start.Add(10 * time.Minute)
+	saveRange(t, store, first)
+	// A later failed fetch resumes at the last confirmed boundary in this session.
+	assertCursor(t, store, later, first.End)
+	assertCoverage(t, store, later, model.TimeRange{Start: first.End, End: later.End})
+}
+
+func TestResumeNewSessionSkipsPriorCursorButPreservesHistoryAndGap(t *testing.T) {
 	store, path := openStore(t)
 	query := reportQuery()
 	assertCursor(t, store, query, query.Start)
+	first := query
+	first.End = first.Start.Add(10 * time.Minute)
+	entry := record(first.Start, "saved in previous session")
+	saveRange(t, store, first, entry)
+	assertCursor(t, store, query, first.End)
 	store.Close()
 	reopened, err := storage.Open(context.Background(), path)
 	if err != nil {
@@ -48,8 +69,18 @@ func TestResumePersistsBeforeFirstFetchAndNeverSkipsRollingGap(t *testing.T) {
 	defer reopened.Close()
 	later := query
 	later.Start = later.Start.Add(30 * time.Minute)
-	assertCursor(t, reopened, later, query.Start)
-	assertCoverage(t, reopened, query, model.TimeRange{Start: query.Start, End: query.End})
+	assertCursor(t, reopened, later, later.Start)
+	// Raising the durable cursor neither invents coverage nor modifies saved events.
+	assertCursor(t, reopened, query, later.Start)
+	assertCoverage(t, reopened, query, model.TimeRange{Start: first.End, End: query.End})
+	logs, err := storage.ReadLogs(context.Background(), path, query)
+	if err != nil || !reflect.DeepEqual(logs, []model.LogRecord{entry}) {
+		t.Fatalf("new session changed saved history: %+v; %v", logs, err)
+	}
+	saveRange(t, reopened, later)
+	assertCursor(t, reopened, later, query.End)
+	assertCoverage(t, reopened, query, model.TimeRange{Start: first.End, End: later.Start})
+	stats(t, reopened, 1, 1)
 }
 
 func TestRangeCoverageEmptyIntervalsContiguousCursorAndScopeIsolation(t *testing.T) {

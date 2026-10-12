@@ -23,6 +23,7 @@ func digestSnapshot(project string, end time.Time, ids ...string) monitor.Snapsh
 
 func TestDigestUsesSavedPeriodAndNewErrorsDoNotSendBeforeNextReport(t *testing.T) {
 	cfg := monitorConfig(t)
+	cfg.SessionStart = time.Now().UTC().Add(-30 * time.Minute)
 	cfg.ReportOnly, cfg.ReportInterval = true, 15*time.Minute
 	calls := 0
 	var starts, ends []time.Time
@@ -66,6 +67,7 @@ func TestDigestUsesSavedPeriodAndNewErrorsDoNotSendBeforeNextReport(t *testing.T
 
 func TestDigestBuilderFailureRetriesSameStartWithoutSendingZeroCounts(t *testing.T) {
 	cfg := monitorConfig(t)
+	cfg.SessionStart = time.Now().UTC().Add(-30 * time.Minute)
 	cfg.ReportOnly, cfg.ReportInterval = true, 15*time.Minute
 	fail := true
 	var starts []time.Time
@@ -128,6 +130,7 @@ func TestDigestKeepsUndeliveredBeginningWhenReplacingReport(t *testing.T) {
 
 func TestDigestRemovesLegacyAlertAndLoadsLongSavedPeriod(t *testing.T) {
 	cfg := monitorConfig(t)
+	cfg.SessionStart = time.Now().UTC().Add(-6 * time.Hour)
 	if _, _, err := monitorCycle(t, context.Background(), cfg, recordsSource(t, repeatedOrderError), &monitorSender{}); err != nil {
 		t.Fatal(err)
 	}
@@ -163,6 +166,7 @@ func TestDigestRemovesLegacyAlertAndLoadsLongSavedPeriod(t *testing.T) {
 
 func TestDigestCapsLongPauseAndExplainsMissingHistory(t *testing.T) {
 	cfg := monitorConfig(t)
+	cfg.SessionStart = time.Now().UTC().Add(-73 * time.Hour)
 	cfg.ReportOnly = true
 	var gotStart, gotEnd time.Time
 	cfg.BuildSnapshot = func(_ context.Context, start, end time.Time) (monitor.Snapshot, error) {
@@ -199,6 +203,7 @@ func TestDigestDryRunDoesNotReadDatabase(t *testing.T) {
 
 func TestDigestSourceFailureReportsSavedPeriodWithCoverage(t *testing.T) {
 	cfg := monitorConfig(t)
+	cfg.SessionStart = time.Now().UTC().Add(-3 * time.Hour)
 	cfg.ReportOnly = true
 	calls := 0
 	var reportStart time.Time

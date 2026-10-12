@@ -11,7 +11,6 @@ import (
 )
 
 const collectionPortion = 2 * time.Minute
-const collectionOverlap = time.Minute
 const maxCollectionRequests = 64
 const maxPreviewRecords = 100000
 const maxPreviewBytes = 64 << 20
@@ -19,7 +18,7 @@ const maxPreviewBytes = 64 << 20
 type collectionResult struct {
 	portions, records int
 	previewBytes      int64
-	caughtUp, failed  bool
+	complete          bool
 	preview           []model.LogRecord // Только dry-run: рабочий сбор не накапливает историю в памяти.
 }
 
@@ -34,18 +33,25 @@ func (m *Monitor) collect(ctx context.Context, end, now time.Time) (collectionRe
 	cycleCtx, cancel := context.WithTimeout(ctx, m.config.Timeout)
 	defer cancel()
 	start := end.Add(-m.config.Window)
-	cursor := start
+	retentionStart := now.Add(-48 * time.Hour)
 	if !m.config.DryRun {
-		var err error
-		cursor, err = m.archive.Resume(cycleCtx, m.logRange(start, end), now)
-		if err != nil {
-			return collected, errors.New("не удалось прочитать позицию сбора из SQLite")
+		// Каждый цикл берёт только свежее окно, без перекрытия и догрузки
+		// старых пропусков. Ошибка не переносит этот запрос в следующий цикл.
+		start = end.Add(-m.config.Interval)
+		if start.Before(m.config.SessionStart) {
+			start = m.config.SessionStart
 		}
 	}
-	if cursor.Before(now.Add(-48 * time.Hour)) {
-		cursor = now.Add(-48 * time.Hour)
+	if start.Before(retentionStart) {
+		start = retentionStart
 	}
-	originalCursor := cursor
+	if !start.Before(end) {
+		// В первые десять секунд ещё нет периода за защитной задержкой Loki.
+		// Не создаём недопустимый диапазон и не считаем ожидание отказом.
+		collected.complete = true
+		return collected, nil
+	}
+	cursor := start
 	requests := 0
 	var fetch func(time.Time, time.Time) (bool, error)
 	fetch = func(from, to time.Time) (bool, error) {
@@ -61,27 +67,21 @@ func (m *Monitor) collect(ctx context.Context, end, now time.Time) (collectionRe
 			return false, ctx.Err()
 		}
 		if err != nil {
-			collected.failed = true
+			// Повтор пока не выполняем: актуальность важнее восстановления окна.
 			return false, nil
 		}
 		if !result.Complete {
 			// Частичные строки нельзя считать доказательством покрытия. Сначала
-			// сохраняем левую половину; отказ справа не откатывает её курсор.
+			// сохраняем левую половину; отказ справа не удаляет уже полученные данные.
 			if to.Sub(from) <= time.Nanosecond {
-				collected.failed = true
 				return false, nil
 			}
 			middle := from.Add(to.Sub(from) / 2)
 			ok, err := fetch(from, middle)
 			if err != nil || !ok {
-				collected.failed = true
 				return false, err
 			}
-			ok, err = fetch(middle, to)
-			if !ok {
-				collected.failed = true
-			}
-			return ok, err
+			return fetch(middle, to)
 		}
 		if !m.config.DryRun {
 			if err := m.archive.SaveRange(cycleCtx, m.logRange(from, to), result.Records, time.Now().UTC()); err != nil {
@@ -89,17 +89,15 @@ func (m *Monitor) collect(ctx context.Context, end, now time.Time) (collectionRe
 					return false, ctx.Err()
 				}
 				if cycleCtx.Err() != nil {
-					collected.failed = true
 					return false, nil
 				}
-				return false, errors.New("не удалось сохранить часть логов в SQLite; её позиция и уведомления не обновлены")
+				return false, errors.New("не удалось сохранить часть логов в SQLite; покрытие и уведомления не обновлены")
 			}
 		} else {
 			// Dry-run объединяет части только в памяти, поэтому лимит должен
 			// относиться ко всему предпросмотру, а не к одному ответу Loki.
 			bytes := previewBytes(result.Records, maxPreviewBytes-collected.previewBytes)
 			if len(result.Records) > maxPreviewRecords-len(collected.preview) || bytes > maxPreviewBytes-collected.previewBytes {
-				collected.failed = true
 				fmt.Fprintln(m.diagnostic, "Предпросмотр остановлен: общий лимит 100000 записей или 64 МиБ превышен. Период получен не полностью; уменьшите окно.")
 				return false, nil
 			}
@@ -110,26 +108,6 @@ func (m *Monitor) collect(ctx context.Context, end, now time.Time) (collectionRe
 		collected.records += len(result.Records)
 		return true, nil
 	}
-	// Минуту перед свежей позицией проверяем ДО продвижения курсора. При
-	// отказе повтор попадёт в тот же диапазон даже после длительной паузы.
-	// Покрытие перед курсором отличает уже сохранённый префикс от первого
-	// запуска, независимо от скользящего окна и прошедшего времени.
-	overlapStart := originalCursor.Add(-collectionOverlap)
-	if overlapStart.Before(now.Add(-48 * time.Hour)) {
-		overlapStart = now.Add(-48 * time.Hour)
-	}
-	if !m.config.DryRun && originalCursor.Before(end) && overlapStart.Before(originalCursor) {
-		coverage, err := m.archive.Coverage(cycleCtx, m.logRange(originalCursor.Add(-time.Nanosecond), originalCursor))
-		if err != nil {
-			return collected, errors.New("не удалось проверить сохранённую часть перед позицией сбора")
-		}
-		if coverage.Known && len(coverage.Gaps) == 0 {
-			ok, err := fetch(overlapStart, originalCursor)
-			if err != nil || !ok {
-				return collected, err
-			}
-		}
-	}
 	for cursor.Before(end) {
 		to := minTime(cursor.Add(collectionPortion), end)
 		ok, err := fetch(cursor, to)
@@ -138,7 +116,7 @@ func (m *Monitor) collect(ctx context.Context, end, now time.Time) (collectionRe
 		}
 		cursor = to
 	}
-	collected.caughtUp = true
+	collected.complete = true
 	return collected, nil
 }
 

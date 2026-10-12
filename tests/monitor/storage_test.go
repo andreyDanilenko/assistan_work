@@ -28,7 +28,7 @@ type monitorArchive struct {
 }
 
 func (a *monitorArchive) Resume(_ context.Context, query model.LogRange, now time.Time) (time.Time, error) {
-	if a.cursor.IsZero() {
+	if a.cursor.IsZero() || a.cursor.Before(query.Start) {
 		a.cursor = query.Start
 	}
 	if a.cursor.Before(now.Add(-48 * time.Hour)) {
@@ -143,6 +143,7 @@ func TestArchiveIsRequiredForSendingButNotDryRun(t *testing.T) {
 func TestArchivePreservesAllCompleteRecordsBeforeAnalysisAndSending(t *testing.T) {
 	cfg := monitorConfig(t)
 	cfg.Window = 2 * time.Minute
+	cfg.SessionStart = time.Now().UTC().Add(-2 * time.Minute)
 	cfg.NoLogsAfter = 2 * time.Minute
 	cfg.Include, cfg.Exclude = "KEEP", "IGNORE"
 	var sequence []string
@@ -170,8 +171,8 @@ func TestArchivePreservesAllCompleteRecordsBeforeAnalysisAndSending(t *testing.T
 	}
 	source := monitorSourceFunc(func(ctx context.Context, q loki.Query) (model.FetchResult, error) {
 		sequence = append(sequence, "fetch")
-		if q.End.Sub(q.Start) != cfg.NoLogsAfter {
-			t.Fatal("expected the wider activity window")
+		if !q.Start.Equal(cfg.SessionStart) || q.End.Sub(q.Start) > cfg.NoLogsAfter {
+			t.Fatal("expected collection within the current session")
 		}
 		original = []model.LogRecord{
 			{Project: q.Project, Timestamp: q.End.Add(-90 * time.Second), Line: `old event with secret payload`, Labels: map[string]string{"pod": "old-pod"}},

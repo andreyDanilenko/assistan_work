@@ -12,7 +12,6 @@ import (
 
 	"loki-analyzer/internal/app"
 	"loki-analyzer/internal/model"
-	"loki-analyzer/internal/report"
 )
 
 // printResponse выбирает представление уже разобранного ответа, не повторяя запрос к Loki.
@@ -93,11 +92,6 @@ func logSummary(streams []model.LokiStream) (int, time.Time, time.Time) {
 		}
 	}
 	return count, first, last
-}
-
-// printAnalysis передает оформление общему модулю отчётов CLI и Telegram.
-func printAnalysis(output io.Writer, result model.AnalysisResult, allOrders bool) error {
-	return report.WriteFile(output, result, allOrders)
 }
 
 // PrintBotInfo показывает учетную запись бота после getMe; токен в эту функцию не передается.

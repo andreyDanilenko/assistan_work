@@ -71,8 +71,8 @@ func run(ctx context.Context, args []string, output, diagnostic io.Writer) int {
 	}
 	// 4. Loki и Telegram получают готовый HTTP-клиент с едиными правилами безопасности.
 	httpClient := utils.NewHTTPClient(options.Timeout)
-	if options.Mode == cli.TelegramMode {
-		return initializeTelegram(ctx, settings.Telegram, httpClient, options.Timeout, output, diagnostic)
+	if options.Mode == cli.TelegramCheckMode {
+		return checkTelegram(ctx, settings.Telegram, httpClient, options.Timeout, output, diagnostic)
 	}
 	if options.Mode == cli.TelegramChatsMode {
 		return discoverTelegramChats(ctx, settings.Telegram, httpClient, options.Timeout, output, diagnostic)
@@ -83,6 +83,7 @@ func run(ctx context.Context, args []string, output, diagnostic io.Writer) int {
 		cli.WriteError(diagnostic, "Ошибка настройки", err)
 		return 1
 	}
+	// watch управляет своим циклом; app.Service и cli.Run нужны ручным командам ниже.
 	if options.Mode == cli.WatchMode {
 		return runMonitor(ctx, settings, options, source, httpClient, output, diagnostic)
 	}
@@ -159,6 +160,7 @@ func runMonitor(ctx context.Context, settings config.Config, options cli.Options
 			SourceID: cfg.SourceID, Project: cfg.Project, Start: start, End: end,
 		}, reportFilter)
 	}
+	cfg.SessionStart = time.Now().UTC()
 	worker, err := monitor.New(cfg, source, sender, archive, output, diagnostic)
 	if err != nil {
 		cli.WriteError(diagnostic, "Ошибка настроек watch", err)
@@ -167,7 +169,12 @@ func runMonitor(ctx context.Context, settings config.Config, options cli.Options
 	if len(cfg.ResellerNames) > 0 {
 		fmt.Fprintf(output, "Справочник реселлеров: %d названий.\n", len(cfg.ResellerNames))
 	}
-	fmt.Fprintf(output, "Мониторинг %q: сбор каждые %s, начальная история %s, отчет %s. Остановка: Ctrl+C.\n", cfg.Project, cfg.Interval, cfg.Window, cfg.ReportInterval)
+	fmt.Fprintf(output, "Мониторинг %q: сбор каждые %s, отчет %s. Остановка: Ctrl+C.\n", cfg.Project, cfg.Interval, cfg.ReportInterval)
+	if cfg.DryRun {
+		fmt.Fprintf(output, "Предпросмотр логов за последние %s; база и позиция сбора не изменяются.\n", cfg.Window)
+	} else {
+		fmt.Fprintf(output, "Текущая сессия с %s. Только свежее окно: без перекрытия, догрузки и автоматических повторов.\n", cfg.SessionStart.Format(time.RFC3339))
+	}
 	if cfg.ReportOnly {
 		fmt.Fprintln(output, "Telegram: только периодические сводки заказов; новые ошибки между сводками отдельными сообщениями не отправляются.")
 	}
@@ -343,9 +350,9 @@ func newSource(settings config.Config, timeout time.Duration, httpClient loki.HT
 	return loki.New(clientConfig, httpClient)
 }
 
-// initializeTelegram проверяет доступ через getMe и выводит данные бота.
+// checkTelegram проверяет доступ через getMe и выводит данные бота.
 // Один проверочный запрос пока не требует отдельного сервиса приложения.
-func initializeTelegram(
+func checkTelegram(
 	ctx context.Context, settings config.Telegram, httpClient telegram.HTTPClient,
 	timeout time.Duration, output, diagnostic io.Writer,
 ) int {

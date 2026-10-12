@@ -92,45 +92,51 @@ func (m *Monitor) cycle(ctx context.Context, now time.Time) error {
 		}
 	}
 	end := now.Add(-10 * time.Second)
+	if !m.config.DryRun && !m.config.SessionStart.Before(end) {
+		// Первые события запрашиваем после задержки Loki. Историю до запуска
+		// не читаем даже ради первой сводки или проверки отсутствия логов.
+		fmt.Fprintf(m.output, "Сбор с %s: ожидаем события текущей сессии. Следующий цикл через %s.\n", m.config.SessionStart.UTC().Format(time.RFC3339), m.config.Interval)
+		return nil
+	}
 	collected, err := m.collect(ctx, end, now)
 	if err != nil {
 		return err
 	}
-	if collected.failed {
+	if !collected.complete {
 		m.state.AlertIssues = nil
 		m.removePending("alert")
 		m.removePending("activity")
-		fmt.Fprintln(m.diagnostic, "Сбор не подтвержден: ошибка Loki или неполный ответ. Отсутствие логов не оценивается. Сохранённые части остаются в базе; повтор начнётся с неподтверждённого периода.")
+		fmt.Fprintln(m.diagnostic, "Сбор не подтвержден: ошибка Loki или неполный ответ. Отсутствие логов не оценивается. Сохранённые части остаются в базе; следующий цикл проверит свежее окно. Старые пропуски не догружаются.")
 		if !m.state.SourceFailed {
-			m.queue("source", "🟠 Нет подтвержденных данных Loki\nПроект: "+safe(m.config.Project)+"\nЧасть периода не получена полностью. Сохранённые части доступны; пропуск будет запрошен повторно. Это не означает отсутствие заказов или логов.", now)
+			m.queue("source", "🟠 Нет подтвержденных данных Loki\nПроект: "+safe(m.config.Project)+"\nЧасть периода не получена полностью. Сохранённые части доступны; пропуск указан в отчёте. Следующий цикл проверит свежие логи. Это не означает отсутствие заказов или логов.", now)
 		}
 		m.state.SourceFailed = true
 	} else {
 		if m.state.SourceFailed && collected.portions > 0 {
-			m.queue("source", "🟢 Loki снова отвечает\nПроект: "+safe(m.config.Project)+"\nПолученные части сохранены. Полнота истории указана в сводке; оставшиеся периоды догружаются по сохранённой позиции.", now)
+			m.queue("source", "🟢 Loki снова отвечает\nПроект: "+safe(m.config.Project)+"\nСвежие логи получены и сохранены. Полнота истории указана в сводке; старые пропуски не догружаются.", now)
 		}
 		m.state.SourceFailed = false
 	}
-	if collected.caughtUp && !collected.failed {
+	if collected.complete {
 		m.state.LastComplete = end
 		if err := m.checkActivity(ctx, end, now); err != nil {
 			return err
 		}
 	}
 	if m.config.ReportOnly {
-		// Сводка доступна и во время догрузки/отказа: покрытие честно показывает пропуски.
-		m.acceptDigest(ctx, Analyze(collected.preview, Filter{Critical: m.filter.Critical}), end, now)
-	} else if collected.caughtUp && !collected.failed {
+		// Сводка доступна и после неполного сбора: покрытие честно показывает пропуски.
+		m.queuePeriodicReport(ctx, Analyze(collected.preview, Filter{Critical: m.filter.Critical}), end, now)
+	} else if collected.complete {
 		records := collected.preview
 		if !m.config.DryRun {
 			readCtx, cancel := context.WithTimeout(ctx, m.config.Timeout)
-			records, err = m.config.ReadWindow(readCtx, end.Add(-m.config.Window), end)
+			records, err = m.config.ReadWindow(readCtx, m.windowStart(end), end)
 			cancel()
 			if err != nil {
 				return errors.New("не удалось прочитать сохранённое окно; новые уведомления не построены")
 			}
 		}
-		m.accept(ctx, records, end, now)
+		m.processAlertWindow(ctx, records, end, now)
 	} else if m.reportDue(now) || m.hasPending("report") {
 		m.queue("report", m.unavailableReport(now), now)
 		m.state.LastReport = now
@@ -148,7 +154,7 @@ func (m *Monitor) cycle(ctx context.Context, now time.Time) error {
 		nextReportAt = now.Add(m.config.Interval)
 	}
 	nextReport := nextReportAt.UTC().Format(time.RFC3339)
-	fmt.Fprintf(m.output, "%s | Сохранено частей: %d | Записей в ответах: %d | Догрузка: %t | Очередь: сводки %d, служебные %d | Следующая сводка: %s\n", now.Format(time.RFC3339), collected.portions, collected.records, !collected.caughtUp, reports, technical, nextReport)
+	fmt.Fprintf(m.output, "%s | Сохранено частей: %d | Записей в ответах: %d | Текущий сбор полный: %t | Очередь: сводки %d, служебные %d | Следующая сводка: %s\n", now.Format(time.RFC3339), collected.portions, collected.records, collected.complete, reports, technical, nextReport)
 
 	if ctx.Err() != nil {
 		return ctx.Err()
@@ -159,10 +165,12 @@ func (m *Monitor) cycle(ctx context.Context, now time.Time) error {
 	return m.deliver(ctx, now)
 }
 
-func (m *Monitor) accept(ctx context.Context, records []model.LogRecord, end, now time.Time) {
+// processAlertWindow обслуживает режим немедленных уведомлений WATCH_REPORT_ONLY=false.
+func (m *Monitor) processAlertWindow(ctx context.Context, records []model.LogRecord, end, now time.Time) {
+	start := m.windowStart(end)
 	window := make([]model.LogRecord, 0, len(records))
 	for _, record := range records {
-		if !record.Timestamp.Before(end.Add(-m.config.Window)) && record.Timestamp.Before(end) {
+		if !record.Timestamp.Before(start) && record.Timestamp.Before(end) {
 			window = append(window, record)
 		}
 	}
@@ -170,7 +178,7 @@ func (m *Monitor) accept(ctx context.Context, records []model.LogRecord, end, no
 	snapshot := Analyze(window, Filter{Critical: m.filter.Critical})
 	if !m.config.DryRun {
 		coverageCtx, cancel := context.WithTimeout(ctx, m.config.Timeout)
-		coverage, err := m.archive.Coverage(coverageCtx, m.logRange(end.Add(-m.config.Window), end))
+		coverage, err := m.archive.Coverage(coverageCtx, m.logRange(start, end))
 		cancel()
 		if err == nil {
 			snapshot.Coverage = coverage
@@ -190,7 +198,7 @@ func (m *Monitor) accept(ctx context.Context, records []model.LogRecord, end, no
 	m.bufferAlerts(critical, now)
 	alertDue := len(m.state.AlertIssues) > 0
 	if alertDue {
-		m.queueReport("alert", m.summaryText(snapshot, end.Add(-m.config.Window), end, true), end.Add(-m.config.Window), end, now)
+		m.queueReport("alert", m.summaryText(snapshot, start, end, true), start, end, now)
 	} else {
 		// Исчезнувшая или исправленная ошибка больше не запускает текущую сводку.
 		m.removePending("alert")
@@ -205,19 +213,19 @@ func (m *Monitor) accept(ctx context.Context, records []model.LogRecord, end, no
 	if refreshReport {
 		// На первом цикле критическое сообщение уже подтверждает работу бота.
 		if !m.state.LastReport.IsZero() || !alertDue || m.hasPending("report") {
-			m.queueReport("report", m.summaryText(snapshot, end.Add(-m.config.Window), end, false), end.Add(-m.config.Window), end, now)
+			m.queueReport("report", m.summaryText(snapshot, start, end, false), start, end, now)
 		}
 		m.state.LastReport = now
 	}
-	fmt.Fprintf(m.output, "%s | Период: %s | Записей: %d | Заказов: %d | Заказов с ошибками: %d | Ошибок: %d | Очередь: %d\n", now.Format(time.RFC3339), durationText(m.config.Window), snapshot.Total, snapshot.Orders, snapshot.OrdersWithErrors, snapshot.Errors, len(m.state.Pending))
+	fmt.Fprintf(m.output, "%s | Период: %s | Записей: %d | Заказов: %d | Заказов с ошибками: %d | Ошибок: %d | Очередь: %d\n", now.Format(time.RFC3339), durationText(end.Sub(start)), snapshot.Total, snapshot.Orders, snapshot.OrdersWithErrors, snapshot.Errors, len(m.state.Pending))
 	if m.config.DryRun && !m.hasPending("report") {
-		fmt.Fprintln(m.output, m.summaryText(snapshot, end.Add(-m.config.Window), end, false))
+		fmt.Fprintln(m.output, m.summaryText(snapshot, start, end, false))
 	}
 }
 
-// Сводка читает весь промежуток между отчётами из базы, а не только последнее
-// окно Loki. Поэтому ошибка между двумя сборами не пропадает из-за границы окна.
-func (m *Monitor) acceptDigest(ctx context.Context, snapshot Snapshot, end, now time.Time) {
+// queuePeriodicReport ставит сводку в очередь, когда наступил срок отчёта.
+// Она учитывает сохранённые события всего периода; неполученные участки видны в покрытии.
+func (m *Monitor) queuePeriodicReport(ctx context.Context, snapshot Snapshot, end, now time.Time) {
 	m.removePending("alert")
 	m.state.AlertIssues, m.state.Alerted = nil, nil
 	if m.reportDue(now) {
@@ -225,18 +233,23 @@ func (m *Monitor) acceptDigest(ctx context.Context, snapshot Snapshot, end, now 
 		if start.IsZero() {
 			// Если первая попытка не удалась, её начало не сдвигается при повторе.
 			if m.state.NextReportStart.IsZero() {
-				m.state.NextReportStart = end.Add(-m.config.Window)
+				m.state.NextReportStart = m.windowStart(end)
 			}
 			start = m.state.NextReportStart
 		}
 		if !start.Before(end) || m.config.DryRun {
-			start = end.Add(-m.config.Window)
+			start = m.windowStart(end)
 		}
 		// Недоставленную сводку заменяем суммарной: её начало сохраняется.
 		for _, message := range m.state.Pending {
 			if message.Kind == "report" && !message.ReportStart.IsZero() && message.ReportStart.Before(start) {
 				start = message.ReportStart
 			}
+		}
+		// Сводка нового запуска начинается с его данных. Прежние записи
+		// и пробелы по-прежнему доступны в отчёте по явному запросу /report.
+		if !m.config.DryRun && start.Before(m.config.SessionStart) {
+			start = m.config.SessionStart
 		}
 		trimmed := start.Before(now.Add(-48 * time.Hour))
 		if trimmed {
@@ -632,4 +645,14 @@ func limitText(value string, limit int) string {
 		return string(runes[:limit-1]) + "…"
 	}
 	return value
+}
+
+// windowStart ограничивает автоматический анализ данными текущего запуска.
+// Предпросмотр остаётся отдельной проверкой выбранного окна без записи в базу.
+func (m *Monitor) windowStart(end time.Time) time.Time {
+	start := end.Add(-m.config.Window)
+	if !m.config.DryRun && start.Before(m.config.SessionStart) {
+		start = m.config.SessionStart
+	}
+	return start
 }

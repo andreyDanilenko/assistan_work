@@ -19,7 +19,7 @@ type Mode int
 
 const (
 	LokiMode Mode = iota
-	TelegramMode
+	TelegramCheckMode
 	AnalyzeMode
 	WatchMode
 	TelegramChatsMode
@@ -50,7 +50,7 @@ func Parse(args []string, now time.Time) (Options, error) {
 	if len(args) > 0 {
 		switch args[0] {
 		case "telegram-check":
-			options.Mode = TelegramMode
+			options.Mode = TelegramCheckMode
 		case "telegram-chats":
 			options.Mode = TelegramChatsMode
 		case "analyze":
@@ -173,7 +173,7 @@ func validateFlags(options Options, seen map[string]bool) error {
 		}
 		return nil
 	}
-	if options.Mode == TelegramMode || options.Mode == TelegramChatsMode || options.Mode == DBStatusMode || options.Mode == DBCleanupMode {
+	if options.Mode == TelegramCheckMode || options.Mode == TelegramChatsMode || options.Mode == DBStatusMode || options.Mode == DBCleanupMode {
 		return nil
 	}
 	request := options.Request
@@ -252,7 +252,7 @@ const helpText = `lokictl — получение логов, анализ зак
   --all-orders                    Показать все заказы; по умолчанию до 10 подробных историй
   --once                          Только watch: один цикл и завершение
   --dry-run                       Только watch: показать сообщения без отправки в Telegram
-  --timeout 30s                   Тайм-аут операции; для watch — одного цикла
+  --timeout 30s                   Тайм-аут операции; для watch — отдельного этапа
   --env-file .env                 Файл настроек; переменные окружения приоритетнее
   --help                          Эта справка
 

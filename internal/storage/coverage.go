@@ -39,8 +39,9 @@ func validateRange(query model.LogRange) error {
 	return nil
 }
 
-// Resume фиксирует начальную точку до первого сетевого запроса. Следующий запуск
-// продолжает её даже при новом скользящем окне. Просроченную историю не подтверждаем.
+// Resume ограничивает прогресс началом текущего сеанса и сроком хранения.
+// Внутри сеанса query.Start не меняется, поэтому ошибки не пропускают диапазоны.
+// Пропущенную между сеансами и просроченную историю не подтверждаем.
 func (s *Store) Resume(ctx context.Context, query model.LogRange, now time.Time) (time.Time, error) {
 	if err := validateRange(query); err != nil {
 		return time.Time{}, err
@@ -54,8 +55,9 @@ func (s *Store) Resume(ctx context.Context, query model.LogRange, now time.Time)
 		return time.Time{}, safeError(ctx, "не удалось прочитать прогресс сбора")
 	}
 	defer tx.Rollback()
-	if err := initProgress(ctx, tx.Tx, query, cutoff); err != nil {
-		return time.Time{}, err
+	if _, err := tx.ExecContext(ctx, `INSERT INTO collection_progress (source_id, project, cursor_ns) VALUES (?, ?, max(?, ?))
+ ON CONFLICT(source_id, project) DO UPDATE SET cursor_ns = max(collection_progress.cursor_ns, excluded.cursor_ns)`, query.SourceID, query.Project, query.Start.UnixNano(), cutoff); err != nil {
+		return time.Time{}, safeError(ctx, "не удалось сохранить прогресс сбора")
 	}
 	var cursor int64
 	if err := tx.QueryRowContext(ctx, `SELECT cursor_ns FROM collection_progress WHERE source_id = ? AND project = ?`, query.SourceID, query.Project).Scan(&cursor); err != nil {

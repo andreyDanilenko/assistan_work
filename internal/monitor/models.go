@@ -29,7 +29,6 @@ type ReportSender interface {
 
 // Archive хранит исходные записи до фильтрации. Реальную SQLite передает main.
 type Archive interface {
-	Resume(context.Context, model.LogRange, time.Time) (time.Time, error)
 	SaveRange(context.Context, model.LogRange, []model.LogRecord, time.Time) error
 	Latest(context.Context, string, string, time.Time) (time.Time, error)
 	Coverage(context.Context, model.LogRange) (model.Coverage, error)
@@ -41,6 +40,7 @@ type Config struct {
 	Project, SourceID, StateFile string
 	ChatID                       int64
 	Interval, Window             time.Duration
+	SessionStart                 time.Time // Нижняя граница текущего процесса; ноль фиксируется один раз в New.
 	ReportInterval, Cooldown     time.Duration
 	NoLogsAfter, Timeout         time.Duration
 	Include, Exclude, Critical   string
@@ -96,6 +96,9 @@ type Monitor struct {
 }
 
 func New(cfg Config, source Source, sender Sender, archive Archive, output, diagnostic io.Writer) (*Monitor, error) {
+	if cfg.SessionStart.IsZero() {
+		cfg.SessionStart = time.Now().UTC()
+	}
 	if source == nil || output == nil || diagnostic == nil || (!cfg.DryRun && sender == nil) {
 		return nil, errors.New("монитору нужны источник, вывод и отправитель для Telegram")
 	}
